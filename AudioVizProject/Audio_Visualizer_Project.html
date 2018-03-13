@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+    <title>Doomsday Visualizer</title>
+	
+    <style>
+        @font-face {
+            font-family: DoomFont;
+            src: url(media/AmazDooMLeft.ttf);
+        }
+        
+        @font-face{
+            font-family: Font2;
+            src: url(media/Font2.otf);
+        }
+        
+        h1, h3 {
+            font-family: DoomFont;
+            letter-spacing: 4px;
+            padding-top: 20px;
+            padding-bottom: 5px;
+            margin: auto;
+            display: table;
+            color: white;
+            font-size: 80px;
+            text-shadow: 2px 2px 5px red;
+        }
+        
+        body {
+            font-size: 20px;
+         background: black;
+         font-family: Font2;
+        }
+    
+        canvas {
+            padding: 0px;
+            float: right;
+            clear: both;
+            background: black;
+            padding-right: 20px;
+        }
+      
+        #controls{
+            width: 800px;
+            color: white;
+            padding-top: 20px;
+            margin: 0 auto;
+            float: right;
+            clear: right;
+        }
+        
+        #sideControls{
+            font-size: 30px;
+            width: 800px;
+            margin: 0 auto;
+            padding: 30px;
+            color: white;
+            float: left;
+            display: inline;
+        }
+        
+        #sideControls div{
+            padding: 10px;
+            margin: 0 auto;
+        }
+        
+        #sideControls label{
+            padding-left: 30px;
+        }
+        
+        #dropMode {
+            width: 100px;
+            height: 100px;
+            margin: auto;
+            display: block;
+        }
+        
+     </style>
+    
+	<script>
+    // IIFE
+	(function(){
+		"use strict";
+		
+		var NUM_SAMPLES = 256;
+		var SOUND_1 = 'media/Doomsday.mp3';
+		var SOUND_2 = 'media/Slayit.mp3';
+		var audioElement;
+		var analyserNode;
+		var canvas,ctx;
+        var invert = false;
+        var noise = false;
+        var lines  = false;
+        var removeEye = false;
+        var removeGears = false;
+        var removeBars = false;
+        var removecircles = false;
+        var drawLinesbool = false;
+        var drawQuadraticbool = false;
+        var drawBezierbool = false;
+        var waveform = false;
+        var dropMode = false;
+        var sliderRotation1 = 0.005;
+        var sliderRotation2 = 0.005;
+        var eyeScale = 50;
+        var centerEye = new Image();
+        var gear1 = new Image();
+        var gear2 = new Image();
+        var rotateGear1 = 10;
+        var rotateGear2 = 10;
+        var delayNode;
+        var delayAmount = 0.0;
+        var counter = 0.0;
+        var rectFillStyle = makeColor(255, 255, 255, .8);
+        centerEye.src = "media/Terminator_Eye.png";
+        gear1.src = "media/Gear-1.png"; 
+        gear2.src = "media/Gear-2.1.png";
+		
+		function init(){
+			// set up canvas stuff
+			canvas = document.querySelector('canvas');
+			ctx = canvas.getContext("2d");
+            
+            			
+			// get reference to <audio> element on page
+			audioElement = document.querySelector('audio');
+			
+			// call our helper function and get an analyser node
+			analyserNode = createWebAudioContextWithAnalyserNode(audioElement);
+			
+			// get sound track <select> and Full Screen button working
+			setupUI();
+			
+			// load and play default sound into audio element
+			playStream(audioElement,SOUND_1);
+			
+			// start animation loop
+			update();
+        };
+        
+        function manipulatePixels(){
+           
+            // Get all of the rgba pixel data of the canvas
+            var imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+            
+            // values are 0-255
+            var data= imageData.data;
+            var length=data.length; 
+            var width=imageData.width;
+            
+            // Iterate through each pixel 
+            //data[i] is red
+            //data[i+1] is green
+            //data[i+2] is blue
+            //data[i+3]is alpha
+            for(var i=0; i<length; i+=4)
+            {
+                // Tints the screen with the beat starting at 48 seconds, which is the drop
+                if(dropMode && audioElement.currentTime > 48.0){
+                    sliderRotation1 = 30;
+                    sliderRotation2 = 30;
+                    // Tint red
+                    if(counter <= 12.5){
+                        data[i] = 255;
+                    }
+                    // Tint green
+                    else if(counter > 12.5 && counter <= 25){
+                        data[i + 1] = 255;
+                    }
+                    // Tint blue
+                    else if(counter > 25 && counter <= 37.5){
+                        data[i + 2] = 255;
+                    }
+                    else if(counter > 37.5)
+                        counter = 0;
+                }
+                if(invert){
+                    var red=data[i], green=data[i+1], blue=data[i+2];
+                    data[i]=255-red;
+                    data[i+1]=255-green;
+                    data[i+2]=255-blue; 
+                }
+                if(noise && Math.random()<.10){ 
+                    data[i]= data[i+1] =  data[i+2]=128;
+                }
+                if(lines)
+                {
+                    var row=Math.floor(i/4/width);
+                    if(row%50==0){
+                        //thisrow
+                        data[i]=data[i+1]=data[i+2]=data[i+3]=255;
+                        //nextrow
+                        data[i+(width*4)]=
+                        data[i+(width*4)+1]=
+                        data[i+(width*4)+2]=
+                        data[i+(width*4)+3]=255;
+                    }
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        };
+        
+                                
+		
+		function createWebAudioContextWithAnalyserNode(audioElement) {
+			var audioCtx, analyserNode, sourceNode;
+			// create new AudioContext
+			// The || is because WebAudio has not been standardized across browsers yet
+			// http://webaudio.github.io/web-audio-api/#the-audiocontext-interface
+			audioCtx = new (window.AudioContext || window.webkitAudioContext);
+			
+			// create an analyser node
+			analyserNode = audioCtx.createAnalyser();
+            
+            // create DelayNode
+            delayNode = audioCtx.createDelay();
+            delayNode.delayTime.value = delayAmount;
+			
+			/*
+			We will request NUM_SAMPLES number of samples or "bins" spaced equally 
+			across the sound spectrum.
+			
+			If NUM_SAMPLES (fftSize) is 256, then the first bin is 0 Hz, the second is 172 Hz, 
+			the third is 344Hz. Each bin contains a number between 0-255 representing 
+			the amplitude of that frequency.
+			*/ 
+			
+			// fft stands for Fast Fourier Transform
+			analyserNode.fftSize = NUM_SAMPLES;
+			
+			// this is where we hook up the <audio> element to the analyserNode
+			sourceNode = audioCtx.createMediaElementSource(audioElement); 
+			sourceNode.connect(analyserNode);
+			
+			// here we connect to the destination i.e. speakers
+			analyserNode.connect(audioCtx.destination);
+            
+            // connect the delay Node
+            sourceNode.connect(audioCtx.destination);
+            sourceNode.connect(delayNode);
+            delayNode.connect(analyserNode);
+            analyserNode.connect(audioCtx.destination);
+            
+			return analyserNode;
+		};
+		
+		function setupUI(){
+			document.querySelector("#trackSelect").onchange = function(e){
+				playStream(audioElement,e.target.value);
+			};
+            
+            document.querySelector("#rectSelect").onchange = function(e){
+                if (e.target.value == "white")
+                    rectFillStyle = makeColor(255, 255, 255, 0.8);
+                else if(e.target.value == "red")
+                    rectFillStyle = makeColor(255, 0, 0, 0.5);
+                else
+                    rectFillStyle = e.target.value;
+            };
+			
+			document.getElementById('invert').onchange = function(e){
+				invert = !invert;
+			};	
+            
+            document.getElementById('lines').onchange = function(e){
+				lines = !lines;
+			};	
+            
+            document.getElementById('noise').onchange = function(e){
+				noise = !noise;
+			};
+            
+            document.getElementById('removeEye').onchange = function(e){
+                removeEye = !removeEye;
+            };
+            
+             document.getElementById('removeGears').onchange = function(e){
+                removeGears = !removeGears;
+            };
+            
+             document.getElementById('removeBars').onchange = function(e){
+                removeBars = !removeBars;
+            };
+            
+             document.getElementById('removeCircles').onchange = function(e){
+                removecircles = !removecircles;
+            };
+            
+            document.getElementById('drawLines').onchange = function(e){
+                drawLinesbool = !drawLinesbool;
+            };
+            
+            document.getElementById('waveform').onchange = function(e){
+                
+                waveform = !waveform;
+            };
+            
+             document.getElementById('drawQuadratic').onchange = function(e){
+                drawQuadraticbool = !drawQuadraticbool;
+            };
+            
+             document.getElementById('drawBezier').onchange = function(e){
+                drawBezierbool = !drawBezierbool;
+            };
+            
+            document.getElementById('innerRotation').onchange = function(e){
+                sliderRotation2 = this.value;
+            };
+            
+            document.getElementById('outerRotation').onchange = function(e){
+                sliderRotation1 = this.value;
+            };
+            
+            document.getElementById('delaySlider').onchange = function(e){
+                delayAmount = this.value;
+            };
+            
+            document.getElementById('dropMode').onchange = function(e){
+                dropMode = !dropMode;
+            };
+        };
+		
+		function playStream(audioElement,path){
+			audioElement.src = path;
+			audioElement.play();
+			audioElement.volume = 0.2;
+            if (path == "media/Doomsday.mp3")
+                document.querySelector('#status').innerHTML = "Now playing: Doomsday - Nero";
+            else
+                document.querySelector('#status').innerHTML = "Now playing: Slay It - Cryptex";
+		};
+		
+		function update() { 
+			// this schedules a call to the update() method in 1/60 seconds
+			requestAnimationFrame(update);
+			
+			/*
+				Nyquist Theorem
+				http://whatis.techtarget.com/definition/Nyquist-Theorem
+				The array of data we get back is 1/2 the size of the sample rate 
+			*/
+			
+			// create a new array of 8-bit integers (0-255)
+			var data = new Uint8Array(NUM_SAMPLES/2); 
+			
+			// waveform data
+            if (waveform)
+                analyserNode.getByteTimeDomainData(data); 
+            else // frequency data
+                analyserNode.getByteFrequencyData(data);
+            
+            // Reset canvas
+			ctx.clearRect(0,0,800,600);  
+			
+            if (drawQuadraticbool)
+                drawQuadraticCurves(data);
+            
+            if (!removecircles)
+                drawCircles(data);
+            
+            if(!removeGears)
+                drawGears(data);
+            
+            if(drawBezierbool)
+                drawBezierCurves(data);
+            
+            if(!removeBars)
+                drawRectangles(data);
+            
+            if(drawLinesbool)
+                drawLines(data);
+            
+            if(!removeEye) {
+                eyeScale = data[0];
+                drawEye(eyeScale);     
+            }
+            
+            // Sets proper delay time
+            delayNode.delayTime.value = delayAmount;
+            
+            manipulatePixels();
+            counter++;
+            
+			 
+		}; 
+		
+		// HELPER
+		function makeColor(red, green, blue, alpha){
+   			var color='rgba('+red+','+green+','+blue+', '+alpha+')';
+   			return color;
+		};
+        
+        // Creates a rainbow gradient 
+        function makeChromaGrad(grad){
+            grad.addColorStop(0.14, "red");
+            grad.addColorStop(0.28, "orange");
+            grad.addColorStop(0.42, "yellow");
+            grad.addColorStop(0.56, "green");
+            grad.addColorStop(0.70, "blue");
+            grad.addColorStop(0.84, "indigo");
+            grad.addColorStop(1, "violet");
+            return grad;
+        };
+        
+        // Draws an eye sprite in the middle of the screen based on the scale parameter
+        function drawEye(scale){
+            ctx.drawImage(centerEye, canvas.width/2 - (centerEye.width * (scale * 0.01))/2, canvas.height/2 - (centerEye.height * (scale * 0.01))/2, centerEye.width * (scale * 0.01), centerEye.height * (scale * 0.01));
+        };
+        
+        // Draws rectangles on the bottom of the canvas scaling with data
+        function drawRectangles(data){
+            for(var i = 0; i < data.length; i ++){
+                
+                // Needed variables
+                var barWidth = 30;
+			    var barSpacing = 5;
+			    
+                // Creates a custom gradient for each bar
+                var gradient = ctx.createLinearGradient(i * (barWidth + barSpacing), canvas.height, i * (barWidth + barSpacing) , -(data[i]) + canvas.height);
+                
+                // Creates a rainbow gradient
+                makeChromaGrad(gradient);
+                
+                 // Set fill style
+                ctx.fillStyle = rectFillStyle;
+                
+                // If user selected rainbow, make fill style the rainbow gradient
+                if (rectFillStyle == "rainbow")
+                    ctx.fillStyle = gradient;
+                                
+                // Creates bars along the bottom of the canvas
+                ctx.fillRect(i * (barWidth + barSpacing), canvas.height, barWidth, -(data[i]));
+            }
+        };
+        
+        // Draws gears that rotate in opposite directions in the center
+        function drawGears(data){
+                
+             ctx.save();
+            // Centers the canvas
+             ctx.translate(canvas.width/2, canvas.height/2);
+            // Rotates the object by the rotateGear1 factor
+             ctx.rotate(rotateGear1 * (Math.PI / 180));
+            // Centers the gear object
+             ctx.translate( -gear1.width/2, -gear1.height/2 );
+            // Draws the image
+             ctx.drawImage(gear1, 0, 0);
+            // Resets the canvas
+             ctx.restore();
+            // Increments the rotation
+             rotateGear1 += (data[0] * sliderRotation1);
+            
+            // Same process
+             ctx.save();
+             ctx.translate(canvas.width/2, canvas.height/2);
+             ctx.rotate(rotateGear2 * (Math.PI / 180));
+             ctx.translate( -gear2.width/2, -gear2.height/2);
+             ctx.drawImage(gear2, 0, 0);
+             ctx.restore();
+             rotateGear2 -= (data[0] * sliderRotation2);
+        };
+        
+        // Draws a diamond pattern focused on the center with lines from all sides
+        function drawLines(data){
+                
+             // Sets variables
+             ctx.save();
+             ctx.strokeStyle = "white";
+             ctx.lineWidth = 5;
+             ctx.lineJoin = "round";
+             ctx.beginPath();
+             
+             // Left side
+             ctx.moveTo(0, canvas.height/2);
+             ctx.lineTo(data[0], canvas.height/2);
+             
+             // Bottom side
+             ctx.moveTo(canvas.width/2, canvas.height);
+             ctx.lineTo(canvas.width/2, canvas.height - data[0] + 100);
+             
+             // Right side
+             ctx.moveTo(canvas.width, canvas.height/2);
+             ctx.lineTo(canvas.width - data[0], canvas.height/2);
+             
+             // Top side
+             ctx.moveTo(canvas.width/2, 0);
+             ctx.lineTo(canvas.width/2, data[0] - 100);
+             
+             // Connects top to left
+             ctx.lineTo(data[0], canvas.height/2);
+             
+             // Connects left to bottom
+             ctx.lineTo(canvas.width/2, canvas.height - data[0] + 100);
+             
+             // Connects bottom to right
+             ctx.lineTo(canvas.width - data[0], canvas.height/2);
+             
+             // Connects right to top
+              ctx.lineTo(canvas.width/2, data[0] - 100);
+             
+             ctx.stroke();
+             ctx.closePath();
+             ctx.restore();
+        };
+        
+        // Draws red circles in the center of the screen
+        function drawCircles(data){
+            // loops through data
+            for (var i = 0; i < data.length; i++){
+                // Sets variables
+                var percent=data[i]/255;
+                var maxRadius=325;
+                var circleRadius=percent*maxRadius;
+            
+                // Draws circles
+                ctx.beginPath();
+                ctx.fillStyle=makeColor(255,0,0, .05);
+                ctx.arc(canvas.width/2,canvas.height/2,circleRadius*1.5,0,2*Math.PI,false);
+                ctx.fill();
+                ctx.closePath();  
+            }
+        };
+        
+        // Draws Bezier curves in a butterfly pattern that scale outwards with data
+        function drawBezierCurves(data){
+            // loops through data
+            for(var i = 0; i < data.length; i ++){
+                
+                // Sets variables
+                ctx.save();
+                var percent=data[i]/255;
+                var maxRadius=200;
+                var circleRadius=percent*maxRadius;
+                ctx.strokeStyle = makeColor(255, 255, 255, 0.5);
+                ctx.lineWidth = 2;
+                
+                if(i < 20){
+                    // Moves to center and starts path
+                    ctx.beginPath();
+                    ctx.moveTo(canvas.width/2, canvas.height/2);
+                    
+                    // Draws top left
+                    ctx.bezierCurveTo(canvas.width/6 + circleRadius, canvas.height/6 - circleRadius,canvas.width/6 - circleRadius, canvas.height/6 + circleRadius, canvas.width/2, canvas.height/2);
+                    
+                    // Draw top right
+                    ctx.bezierCurveTo(5 * canvas.width/6 - circleRadius, canvas.height/6 - circleRadius,5 * canvas.width/6 + circleRadius, canvas.height/6 + circleRadius, canvas.width/2, canvas.height/2);
+                    
+                    // Draws bottom left
+                    ctx.bezierCurveTo(canvas.width/6 - circleRadius,5 * canvas.height/6 - circleRadius,canvas.width/6 + circleRadius, 5 * canvas.height/6 + circleRadius, canvas.width/2, canvas.height/2);
+                    
+                    // Draws bottom right
+                    ctx.bezierCurveTo(5 * canvas.width/6 + circleRadius, 5 * canvas.height/6 - circleRadius,5 * canvas.width/6 - circleRadius, 5 * canvas.height/6 + circleRadius, canvas.width/2, canvas.height/2);
+                    
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        };
+        
+        // Draws quadratic curves anchored on both side on the canvas flipping up and down in the center
+        function drawQuadraticCurves(data){
+            // Sets variables
+            ctx.save();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            
+            
+            for(var i=0; i<data.length; i++) { 
+				                
+                if (i < 20){
+                    ctx.beginPath();
+                    ctx.moveTo(0, canvas.height/2);
+                    // If I is even, make the control point move down
+                    if (i%2 == 0){
+                        ctx.quadraticCurveTo(canvas.width/2, data[i] * 4, canvas.width, canvas.height/2)
+                    }
+                    // If I is odd, make the control point move up
+                    else{
+                     ctx.quadraticCurveTo(canvas.width/2, canvas.height -data[i] * 4, canvas.width, canvas.height/2)
+                    }
+                    ctx.stroke();
+                }
+            };
+            ctx.restore();
+        };
+        
+		window.addEventListener("load",init);
+	}());
+		
+	</script>
+</head>
+<body>
+    <h1>Doomsday Visualizer</h1>
+	
+    <canvas id="canvas" width="800" height="600"></canvas>
+	
+    <div id="sideControls">
+        <h3>Controls</h3>
+       
+        <div>
+            <label>Track: 
+                <select id="trackSelect" >
+                    <option value="media/Doomsday.mp3">Doomsday - Nero</option>
+                    <option value="media/Slayit.mp3">Slay It - Cryptex</option>
+                </select>
+		  </label>
+        </div>
+        
+        <div>
+            <label>Rectangle Color: 
+                <select id="rectSelect" >
+                    <option value="white">White</option>
+                    <option value="red">Red</option>
+                    <option value="rainbow">Rainbow</option>
+			     </select>
+		  </label>
+        </div>
+        
+        <div>
+            <label>Remove Eye</label>
+            <input type="checkbox" id="removeEye">
+            
+            <label>Remove Gears</label>
+            <input type="checkbox" id="removeGears">
+            
+            <label>Remove Bars</label>
+            <input type="checkbox" id="removeBars">
+            
+            <label>Remove Circles</label>
+            <input type="checkbox" id="removeCircles">
+        </div>
+        
+        <div>
+            <label>Draw Lines</label>
+            <input type="checkbox" id="drawLines">
+            
+            <label>Draw Quadratic Curves</label>
+            <input type="checkbox" id="drawQuadratic">
+            
+            <label>Draw Bezier Curves</label>
+            <input type="checkbox" id="drawBezier">
+        </div>
+        
+        <div>
+            <label>Invert</label>
+			<input type="checkbox" id="invert">
+            
+            <label for="noise">Noise</label>
+			<input type="checkbox" id="noise">
+            
+            <label for="lines">Lines</label>
+			<input type="checkbox" id="lines">
+            
+            <label>Waveform Data</label>
+            <input type="checkbox" id="waveform">
+        </div>
+        
+        <div>
+            <label>Inner Gear Rotation Speed </label>
+            <input type="range" min="0.005" max="0.1" value="0" step="0.001" id="innerRotation">
+            <p></p>   
+            <label>Outer Gear Rotation Speed </label>
+            <input type="range" min="0.005" max="0.1" value="0" step="0.001" id="outerRotation">
+            <p></p>
+            <label>Delay Time</label>
+            <input type="range" min="0.0" max="1.0" value="0" step="0.1" id="delaySlider">
+        </div>
+        
+        <div>
+            <h3>Intense Drop Mode</h3>
+            <input type="checkbox" id="dropMode">
+        </div>
+       
+    </div>
+    
+    <div id="controls">
+		<audio controls loop ></audio>
+		<div id="status">???</div>
+    </div>
+    
+</body>
+</html>
